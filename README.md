@@ -70,7 +70,9 @@ publish a real generated site before any custom-domain work begins.
 
 <!-- status-rollout:default-site -->
 
-- [ ] Verify the authoritative generated branch locally: run
+- [ ] Before configuring a CNAME, verify
+      `https://blockvantage.github.io/pulse-status/` returns HTTP 200. Also
+      verify the authoritative generated branch locally: run
       `git fetch origin gh-pages`, materialize it with
       `git archive origin/gh-pages | tar -x -C <preview-dir>`, and serve that
       directory using `python3 -m http.server 4173 --directory <preview-dir>`.
