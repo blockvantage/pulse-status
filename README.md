@@ -26,6 +26,18 @@ homepage must contain `<title>Pulse`. The login check requires its app-specific
 `brand-kicker` marker without changing the page's metadata contract. The
 homepage does not accept a redirect as healthy.
 
+After each successful scheduled Uptime check, the serialized writer job amends
+the current `gh-pages` commit with a same-origin `monitor-freshness.json`. Manual
+dispatches never update it, and amending avoids unbounded branch history. The
+page shows a warning by default, shares a five-minute browser cache, and
+re-evaluates the recorded check time every minute. It never calls the GitHub API
+or fabricates and overrides an individual service result.
+
+Static-site builds check out `upptime/status-page` at reviewed commit
+`54c2ff5a3d998d525ee4c7e68dc7ce7414d89c33` and run `npm ci` against that
+commit's lockfile. No status-page package spec or mutable `npm install` executes
+under the publishing token.
+
 ## External Release Gates
 
 Complete and record these operations in order. The Upptime workflow must first
@@ -39,8 +51,8 @@ publish a real generated site before any custom-domain work begins.
 
 <!-- status-rollout:static-site-ci -->
 
-- [ ] Dispatch `Static Site CI`, then observe the run through completion:
-      `gh workflow run "Static Site CI" --repo blockvantage/pulse-status`, followed
+- [ ] Dispatch `Static Site CI` from `main`, then observe the run through completion:
+      `gh workflow run "Static Site CI" --ref main --repo blockvantage/pulse-status`, followed
       by `gh run list --repo blockvantage/pulse-status --workflow "Static Site CI"`
       and `gh run watch <run-id> --repo blockvantage/pulse-status --exit-status`.
 
@@ -58,8 +70,14 @@ publish a real generated site before any custom-domain work begins.
 
 <!-- status-rollout:default-site -->
 
-- [ ] Verify `https://blockvantage.github.io/pulse-status/` returns HTTP 200 and
-      renders the generated Upptime site. Do not continue on a redirect or error.
+- [ ] Verify the authoritative generated branch locally: run
+      `git fetch origin gh-pages`, materialize it with
+      `git archive origin/gh-pages | tar -x -C <preview-dir>`, and serve that
+      directory using `python3 -m http.server 4173 --directory <preview-dir>`.
+      Confirm `http://127.0.0.1:4173/` returns HTTP 200 and renders Pulse Status,
+      and that `status-freshness.js` plus `monitor-freshness.json` are present.
+      Do not require the GitHub project-subpath URL after a CNAME is configured;
+      GitHub may redirect it to the custom hostname.
 
 <!-- status-rollout:org-ownership -->
 
