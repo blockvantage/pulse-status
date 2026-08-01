@@ -124,9 +124,16 @@ rollout_markers = %w[
   gate-complete
 ]
 marker_tokens = rollout_markers.map { |marker| "<!-- status-rollout:#{marker} -->" }
-marker_positions = marker_tokens.map { |marker| readme.index(marker) }
-unless marker_positions.all? && marker_positions == marker_positions.sort && marker_positions.uniq.length == marker_positions.length
-  failures << "status rollout markers are missing, duplicated, or out of order"
+marker_counts = marker_tokens.to_h do |marker|
+  [marker, readme.scan(Regexp.new(Regexp.escape(marker))).length]
+end
+markers_unique = marker_counts.values.all? { |count| count == 1 }
+failures << "status rollout markers must each occur exactly once" unless markers_unique
+
+marker_positions = markers_unique ? marker_tokens.map { |marker| readme.index(marker) } : []
+markers_ordered = markers_unique && marker_positions == marker_positions.sort
+unless !markers_unique || markers_ordered
+  failures << "status rollout markers are out of order"
 end
 
 gate_requirements = {
@@ -144,7 +151,7 @@ gate_requirements = {
   "gate-complete" => [/Do not mark.*gate complete/i, /repository sync/, /workflow publication/, /Pages/, /DNS/, /TLS/, /live HTTP checks/]
 }
 
-if marker_positions.all?
+if markers_ordered
   rollout_markers.each_with_index do |marker, index|
     section_start = marker_positions[index]
     section_end = marker_positions[index + 1] || readme.length
