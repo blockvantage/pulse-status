@@ -1,5 +1,9 @@
 owner: blockvantage
 repo: pulse-status
+customStatusWebsitePackage: '@upptime/status-page@1.17.0'
+skipDescriptionUpdate: true
+skipTopicsUpdate: true
+skipHomepageUpdate: true
 
 sites:
   - name: Pulse Dashboard
@@ -28,6 +32,25 @@ status-website:
   name: Pulse Status
   introTitle: "Pulse Platform Status"
   introMessage: "Real-time monitoring of Pulse platform services. Checks run every 5 minutes."
+  customBodyHtml: |
+    <aside id="monitor-freshness" class="monitor-freshness" role="alert" aria-live="polite">
+      Status checks are delayed. Current service state may be stale.
+    </aside>
+  css: |
+    .monitor-freshness {
+      background: #fff4e5;
+      border-bottom: 1px solid #d97706;
+      color: #6f3b00;
+      font-size: 0.95rem;
+      padding: 0.75rem 1rem;
+      text-align: center;
+    }
+    .monitor-freshness[hidden] {
+      display: none;
+    }
+  scripts:
+    - src: /status-freshness.js?v=1
+      async: true
   navbar:
     - title: Status
       href: /

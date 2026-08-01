@@ -43,6 +43,16 @@ EXPECTED_SCHEDULES = {
   "uptime.yml" => ["*/5 * * * *"]
 }.freeze
 
+EXPECTED_TIMEOUTS = {
+  "graphs.yml" => 15,
+  "policy.yml" => 10,
+  "response-time.yml" => 15,
+  "setup.yml" => 45,
+  "site.yml" => 30,
+  "summary.yml" => 15,
+  "uptime.yml" => 10
+}.freeze
+
 EXPECTED_CONCURRENCY = EXPECTED_WORKFLOWS.to_h do |file|
   group = if file == "policy.yml"
             "${{ github.repository }}-${{ github.ref_name }}-policy"
@@ -80,6 +90,9 @@ workflow_paths.each do |path|
 
   concurrency = yaml.dig("concurrency", "group")
   failures << "#{file}: concurrency is #{concurrency.inspect}" unless concurrency == EXPECTED_CONCURRENCY[file]
+
+  timeout = yaml.dig("jobs", file == "policy.yml" ? "policy" : "release", "timeout-minutes")
+  failures << "#{file}: timeout is #{timeout.inspect}" unless timeout == EXPECTED_TIMEOUTS[file]
 end
 
 failures << "used action set is #{used_actions.to_a.sort.inspect}" unless used_actions == PINNED_ACTIONS
@@ -90,6 +103,41 @@ failures << "self-update behavior remains" if all_workflow_text.match?(/update[_
 failures << "mutable action reference remains" if all_workflow_text.match?(/uses:\s*[^\s]+@(master|main|v?\d+(?:\.\d+){0,2})\b/)
 failures << "workflow overwrite warning remains" if all_workflow_text.include?("will be overwritten")
 failures << "GH_PAT fallback remains" if all_workflow_text.include?("secrets.GH_PAT")
+
+config = YAML.safe_load(File.read(File.join(ROOT, ".upptimerc.yml")), aliases: true)
+failures << "description mutation is not disabled" unless config["skipDescriptionUpdate"] == true
+failures << "topics mutation is not disabled" unless config["skipTopicsUpdate"] == true
+failures << "homepage mutation is not disabled" unless config["skipHomepageUpdate"] == true
+unless config["customStatusWebsitePackage"] == "@upptime/status-page@1.17.0"
+  failures << "status website package is not pinned to @upptime/status-page@1.17.0"
+end
+
+status_website = config["status-website"] || {}
+custom_body = status_website["customBodyHtml"].to_s
+scripts = Array(status_website["scripts"])
+failures << "fail-closed freshness banner is missing" unless custom_body.include?('id="monitor-freshness"')
+failures << "freshness banner is not an alert" unless custom_body.match?(/role=["']alert["']/)
+unless scripts.any? { |script| script == { "src" => "/status-freshness.js?v=1", "async" => true } }
+  failures << "status freshness runtime is not loaded from the generated site"
+end
+
+uptime_text = File.read(File.join(WORKFLOW_DIR, "uptime.yml"))
+if uptime_text.match?(/write-heartbeat|monitor-heartbeat/)
+  failures << "uptime workflow creates redundant heartbeat commits"
+end
+
+freshness_text = File.read(File.join(ROOT, "assets", "status-freshness.js"))
+unless freshness_text.include?("/actions/workflows/uptime.yml/runs?event=schedule&status=success&per_page=1")
+  failures << "freshness runtime does not query successful scheduled Uptime runs"
+end
+if freshness_text.match?(/workflow_dispatch|monitor-heartbeat\.json/)
+  failures << "freshness runtime can be satisfied by a manual or fabricated heartbeat"
+end
+
+policy_text = File.read(File.join(WORKFLOW_DIR, "policy.yml"))
+unless policy_text.include?("node --test scripts/status-runtime.test.mjs")
+  failures << "policy workflow does not run status runtime tests"
+end
 
 sample_pattern = %r{google|wikipedia|hacker-news|secret-site}
 sample_paths = Dir.glob(File.join(ROOT, "{api,graphs,history}/**/*"), File::FNM_DOTMATCH)

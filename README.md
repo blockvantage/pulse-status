@@ -26,6 +26,12 @@ homepage must contain `<title>Pulse`. The login check requires its app-specific
 `brand-kicker` marker without changing the page's metadata contract. The
 homepage does not accept a redirect as healthy.
 
+The public site checks GitHub's public Actions API for the latest successful
+scheduled Uptime run. It shows a warning by default and hides it only when that
+run was created no more than 20 minutes ago. Manual dispatches and reruns cannot
+clear the warning, and freshness never fabricates or overrides individual service
+results.
+
 ## External Release Gates
 
 Complete and record these operations in order. The Upptime workflow must first
