@@ -29,7 +29,7 @@ jobs:
         with:
           ref: main
           token: ${{ github.token }}
-          persist-credentials: false
+          persist-credentials: true
       - name: Update response time
         uses: upptime/uptime-monitor@6e7c186f842ae4040cf75956a00548426a1e42aa # v1.43.12
         with:
@@ -54,6 +54,39 @@ jobs:
           command: "graphs"
         env:
           GH_PAT: ${{ github.token }}
+      - name: Scrub trusted checkout credential
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # checkout v5 and earlier stored the header directly in local config.
+          git config --local --unset-all http.https://github.com/.extraheader || true
+
+          # checkout v6 stores it in RUNNER_TEMP and adds local includeIf entries.
+          while IFS= read -r credential_include; do
+            credential_key="${credential_include%% *}"
+            credential_path="${credential_include#* }"
+            case "$credential_path" in
+              "$RUNNER_TEMP"/git-credentials-*.config|/github/runner_temp/git-credentials-*.config)
+                git config --local --fixed-value --unset-all "$credential_key" "$credential_path"
+                rm -f -- "$RUNNER_TEMP/${credential_path##*/}"
+                ;;
+            esac
+          done < <(
+            git config --local --get-regexp '^includeif\.[^[:space:]]*\.path$' || true
+          )
+
+          if git config --show-origin --get-regexp \
+            '(^|\.)http\.https://github\.com/\.extraheader$|^includeif\.[^[:space:]]*\.path$' \
+            | grep -Eqi 'authorization|git-credentials-'; then
+            echo "GitHub checkout credential remains in git config" >&2
+            exit 1
+          fi
+          if find "$RUNNER_TEMP" -maxdepth 1 -type f \
+            -name 'git-credentials-*.config' -print -quit | grep -q .; then
+            echo "GitHub checkout credential file remains in RUNNER_TEMP" >&2
+            exit 1
+          fi
       - name: Check out pinned status generator
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

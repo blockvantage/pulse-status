@@ -143,8 +143,10 @@ end
     step["uses"].to_s.start_with?("actions/checkout@")
   end
   failures << "#{file}: expected exactly two checkout steps" unless checkout_steps.length == 2
-  if checkout_steps.any? { |step| step.dig("with", "persist-credentials") != false }
-    failures << "#{file}: checkout persists the contents-write credential"
+  expected_persistence = file == "setup.yml" ? [true, false] : [false, false]
+  actual_persistence = checkout_steps.map { |step| step.dig("with", "persist-credentials") }
+  unless actual_persistence == expected_persistence
+    failures << "#{file}: checkout credential persistence is #{actual_persistence.inspect}"
   end
   triggers = workflow["on"] || workflow[true] || {}
   branches = triggers.dig("push", "branches")
@@ -158,6 +160,33 @@ end
   failures << "#{file}: locked npm install missing" unless text.match?(/working-directory:\s*site[\s\S]*run:\s*npm ci/)
   failures << "#{file}: mutable uptime-monitor site command remains" if text.match?(/command:\s*["']site["']/)
   failures << "#{file}: wrong publish directory" unless text.include?('publish_dir: "site/__sapper__/export/"')
+end
+
+setup_text = File.read(File.join(WORKFLOW_DIR, "setup.yml"))
+setup_step_names = [
+  "- name: Update response time",
+  "- name: Update summary in README",
+  "- name: Generate graphs",
+  "- name: Scrub trusted checkout credential",
+  "- name: Check out pinned status generator",
+  "- name: Install locked status generator",
+  "- name: Generate site",
+]
+setup_step_offsets = setup_step_names.map { |name| setup_text.index(name) }
+unless setup_step_offsets.none?(&:nil?) && setup_step_offsets == setup_step_offsets.sort
+  failures << "setup.yml: trusted writes, credential scrub, and generator boundary are out of order"
+end
+scrub_start = setup_text.index("- name: Scrub trusted checkout credential")
+generator_start = setup_text.index("- name: Check out pinned status generator")
+scrub_step = scrub_start && generator_start ? setup_text[scrub_start...generator_start] : ""
+{
+  "legacy extraheader removal" => "http.https://github.com/.extraheader",
+  "checkout-v6 includeIf removal" => "includeif\\.[^[:space:]]*\\.path",
+  "checkout-v6 credential-file removal" => "git-credentials-*",
+  "exact includeIf value removal" => "--fixed-value --unset-all",
+  "runner temp scoping" => "RUNNER_TEMP",
+}.each do |contract, needle|
+  failures << "setup.yml: credential scrub lacks #{contract}" unless scrub_step.include?(needle)
 end
 
 uptime_text = File.read(File.join(WORKFLOW_DIR, "uptime.yml"))
