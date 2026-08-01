@@ -2,6 +2,7 @@
 
 require "set"
 require "yaml"
+require "json"
 
 ROOT = File.expand_path("..", __dir__)
 WORKFLOW_DIR = File.join(ROOT, ".github", "workflows")
@@ -30,7 +31,7 @@ EXPECTED_PERMISSIONS = {
   "setup.yml" => { "contents" => "write", "issues" => "read" },
   "site.yml" => { "contents" => "write" },
   "summary.yml" => { "contents" => "write", "issues" => "read" },
-  "uptime.yml" => { "contents" => "write", "issues" => "write" }
+  "uptime.yml" => { "actions" => "read", "contents" => "write", "issues" => "write" }
 }.freeze
 
 EXPECTED_SCHEDULES = {
@@ -65,6 +66,10 @@ end.freeze
 failures = []
 
 workflow_paths = Dir.glob(File.join(WORKFLOW_DIR, "*.yml")).sort
+unsupported_workflow_paths = Dir.glob(File.join(WORKFLOW_DIR, "*.yaml")).sort
+unless unsupported_workflow_paths.empty?
+  failures << "unsupported .yaml workflows: #{unsupported_workflow_paths.map { |path| File.basename(path) }.inspect}"
+end
 workflow_names = workflow_paths.map { |path| File.basename(path) }
 failures << "workflow set is #{workflow_names.inspect}" unless workflow_names == EXPECTED_WORKFLOWS
 
@@ -108,9 +113,7 @@ config = YAML.safe_load(File.read(File.join(ROOT, ".upptimerc.yml")), aliases: t
 failures << "description mutation is not disabled" unless config["skipDescriptionUpdate"] == true
 failures << "topics mutation is not disabled" unless config["skipTopicsUpdate"] == true
 failures << "homepage mutation is not disabled" unless config["skipHomepageUpdate"] == true
-unless config["customStatusWebsitePackage"] == "@upptime/status-page@1.17.0"
-  failures << "status website package is not pinned to @upptime/status-page@1.17.0"
-end
+failures << "mutable custom status website package override remains" if config.key?("customStatusWebsitePackage")
 
 status_website = config["status-website"] || {}
 custom_body = status_website["customBodyHtml"].to_s
@@ -121,23 +124,53 @@ unless scripts.any? { |script| script == { "src" => "/status-freshness.js?v=1", 
   failures << "status freshness runtime is not loaded from the generated site"
 end
 
-uptime_text = File.read(File.join(WORKFLOW_DIR, "uptime.yml"))
-if uptime_text.match?(/write-heartbeat|monitor-heartbeat/)
-  failures << "uptime workflow creates redundant heartbeat commits"
-end
-
 freshness_text = File.read(File.join(ROOT, "assets", "status-freshness.js"))
-unless freshness_text.include?("/actions/workflows/uptime.yml/runs?event=schedule&status=success&per_page=1")
-  failures << "freshness runtime does not query successful scheduled Uptime runs"
-end
-if freshness_text.match?(/workflow_dispatch|monitor-heartbeat\.json/)
-  failures << "freshness runtime can be satisfied by a manual or fabricated heartbeat"
-end
+failures << "freshness runtime calls the GitHub API" if freshness_text.match?(/api\.github\.com|raw\.githubusercontent\.com/)
+failures << "freshness runtime is not same-origin" unless freshness_text.include?('FRESHNESS_URL = "/monitor-freshness.json"')
+
+seed = JSON.parse(File.read(File.join(ROOT, "assets", "monitor-freshness.json")))
+failures << "freshness seed must fail closed" unless seed == { "checkedAt" => nil }
 
 policy_text = File.read(File.join(WORKFLOW_DIR, "policy.yml"))
-unless policy_text.include?("node --test scripts/status-runtime.test.mjs")
-  failures << "policy workflow does not run status runtime tests"
+unless policy_text.include?("node --test scripts/*.test.mjs")
+  failures << "policy workflow does not run status contract tests"
 end
+
+%w[site.yml setup.yml].each do |file|
+  text = File.read(File.join(WORKFLOW_DIR, file))
+  workflow = YAML.safe_load(text, aliases: true)
+  checkout_steps = workflow.dig("jobs", "release", "steps").select do |step|
+    step["uses"].to_s.start_with?("actions/checkout@")
+  end
+  failures << "#{file}: expected exactly two checkout steps" unless checkout_steps.length == 2
+  if checkout_steps.any? { |step| step.dig("with", "persist-credentials") != false }
+    failures << "#{file}: checkout persists the contents-write credential"
+  end
+  triggers = workflow["on"] || workflow[true] || {}
+  branches = triggers.dig("push", "branches")
+  failures << "#{file}: writer push branches are #{branches.inspect}" unless branches == ["main"]
+  job_if = workflow.dig("jobs", "release", "if").to_s
+  failures << "#{file}: writer job is not main-only" unless job_if.include?("github.ref == 'refs/heads/main'")
+  failures << "#{file}: pinned generator repository missing" unless text.include?("repository: upptime/status-page")
+  unless text.include?("ref: 54c2ff5a3d998d525ee4c7e68dc7ce7414d89c33")
+    failures << "#{file}: status generator commit is not pinned"
+  end
+  failures << "#{file}: locked npm install missing" unless text.match?(/working-directory:\s*site[\s\S]*run:\s*npm ci/)
+  failures << "#{file}: mutable uptime-monitor site command remains" if text.match?(/command:\s*["']site["']/)
+  failures << "#{file}: wrong publish directory" unless text.include?('publish_dir: "site/__sapper__/export/"')
+end
+
+uptime_text = File.read(File.join(WORKFLOW_DIR, "uptime.yml"))
+publisher_start = uptime_text.index("- name: Publish monitor freshness")
+publisher = publisher_start ? uptime_text[publisher_start..] : ""
+failures << "scheduled freshness publisher missing" if publisher.empty?
+failures << "freshness publisher is not schedule-only" unless publisher.match?(/if:\s*github\.event_name == 'schedule'/)
+failures << "freshness publisher does not amend gh-pages" unless publisher.include?("git -C \"$worktree\" commit --amend --no-edit")
+failures << "freshness publisher lacks bounded force lease" unless publisher.include?("--force-with-lease=")
+run_api_url = "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+failures << "freshness publisher does not authenticate the workflow-run lookup" unless publisher.include?(run_api_url)
+failures << "freshness publisher does not use immutable run creation time" unless publisher.include?(".created_at")
+failures << "freshness publisher derives freshness from wall-clock time" if publisher.match?(/date\s+-u/)
 
 sample_pattern = %r{google|wikipedia|hacker-news|secret-site}
 sample_paths = Dir.glob(File.join(ROOT, "{api,graphs,history}/**/*"), File::FNM_DOTMATCH)
@@ -189,7 +222,7 @@ gate_requirements = {
   "static-site-ci" => [/Static Site CI/, /gh workflow run/, /gh run watch/],
   "generated-branch" => [/genuine\s+`gh-pages`\s+branch/i, /403/, /missing branch is a no-go/i],
   "pages-source" => [/Deploy from a branch/i, /select\s+`gh-pages`\s+and\s+the\s+`\/`\s+root/i],
-  "default-site" => [%r{https://blockvantage\.github\.io/pulse-status/}, /HTTP 200/, /Do not continue on a redirect or error/i],
+  "default-site" => [/git archive\s+origin\/gh-pages/i, %r{http://127\.0\.0\.1:4173/}, /HTTP 200/i, /monitor-freshness\.json/],
   "org-ownership" => [/verify ownership of\s+`opsprint\.ai`/i, /before claiming any custom hostname/i],
   "dns-cname" => [/DNS-only CNAME/i, /blockvantage\.github\.io/, /Do not proxy.*Cloudflare/i],
   "custom-domain" => [/Add\s+`status\.opsprint\.ai`.*Pages custom domain/i],

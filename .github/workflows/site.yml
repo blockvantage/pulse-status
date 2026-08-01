@@ -4,6 +4,8 @@
 name: Static Site CI
 on:
   push:
+    branches:
+      - main
     paths:
       - "assets/**"
   schedule:
@@ -21,24 +23,41 @@ jobs:
     name: Build and deploy site
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: main
           token: ${{ github.token }}
-      - name: Generate site
-        uses: upptime/uptime-monitor@6e7c186f842ae4040cf75956a00548426a1e42aa # v1.43.12
+          persist-credentials: false
+      - name: Check out pinned status generator
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          command: "site"
-        env:
-          GH_PAT: ${{ github.token }}
+          repository: upptime/status-page
+          ref: 54c2ff5a3d998d525ee4c7e68dc7ce7414d89c33 # v1.17.0
+          path: site
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install locked status generator
+        working-directory: site
+        run: npm ci
+      - name: Generate site
+        working-directory: site
+        run: |
+          mkdir -p assets
+          cp -R ../assets/. assets/
+          npm run export
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         name: GitHub Pages Deploy
         with:
           github_token: ${{ github.token }}
-          publish_dir: "site/status-page/__sapper__/export/"
+          publish_dir: "site/__sapper__/export/"
           force_orphan: "false"
           user_name: "Upptime Bot"
           user_email: "73812536+upptime-bot@users.noreply.github.com"

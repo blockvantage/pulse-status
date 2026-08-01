@@ -1,6 +1,5 @@
 owner: blockvantage
 repo: pulse-status
-customStatusWebsitePackage: '@upptime/status-page@1.17.0'
 skipDescriptionUpdate: true
 skipTopicsUpdate: true
 skipHomepageUpdate: true

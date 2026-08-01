@@ -29,4 +29,4 @@ jobs:
       - name: Check repository policy
         run: ruby scripts/check-policy.rb
       - name: Test status runtime
-        run: node --test scripts/status-runtime.test.mjs
+        run: node --test scripts/*.test.mjs
