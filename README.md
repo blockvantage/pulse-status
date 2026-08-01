@@ -22,8 +22,10 @@ homepage does not accept a redirect as healthy.
 
 ## External Release Gates
 
-The status site uses the `gh-pages` branch at `/` as its GitHub Pages source.
-The release owner must complete and record these operations outside this repo:
+The Upptime deployment workflows publish the real generated site to the
+`gh-pages` branch at `/`. Configure that branch as the GitHub Pages source only
+after the initial generated site exists. The release owner must complete and
+record these operations outside this repo:
 
 1. Confirm the default GitHub Pages URL serves the generated Upptime site over
    HTTPS before adding a custom domain.
