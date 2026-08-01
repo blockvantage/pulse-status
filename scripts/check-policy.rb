@@ -44,8 +44,12 @@ EXPECTED_SCHEDULES = {
 }.freeze
 
 EXPECTED_CONCURRENCY = EXPECTED_WORKFLOWS.to_h do |file|
-  slug = File.basename(file, ".yml")
-  [file, "${{ github.repository }}-${{ github.ref_name }}-#{slug}"]
+  group = if file == "policy.yml"
+            "${{ github.repository }}-${{ github.ref_name }}-policy"
+          else
+            "${{ github.repository }}-upptime-writer"
+          end
+  [file, group]
 end.freeze
 
 failures = []
@@ -85,6 +89,7 @@ all_workflow_text = workflow_paths.map { |path| File.read(path) }.join("\n")
 failures << "self-update behavior remains" if all_workflow_text.match?(/update[_-]template|command:\s*["']?update-template/i)
 failures << "mutable action reference remains" if all_workflow_text.match?(/uses:\s*[^\s]+@(master|main|v?\d+(?:\.\d+){0,2})\b/)
 failures << "workflow overwrite warning remains" if all_workflow_text.include?("will be overwritten")
+failures << "GH_PAT fallback remains" if all_workflow_text.include?("secrets.GH_PAT")
 
 sample_pattern = %r{google|wikipedia|hacker-news|secret-site}
 sample_paths = Dir.glob(File.join(ROOT, "{api,graphs,history}/**/*"), File::FNM_DOTMATCH)
