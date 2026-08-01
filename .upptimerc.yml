@@ -1,0 +1,40 @@
+owner: blockvantage
+repo: pulse-status
+
+sites:
+  - name: Pulse Dashboard
+    url: https://pulse.opsprint.ai
+    expectedStatusCodes:
+      - 200
+    __dangerous__body_down_if_text_missing: '<title>Pulse'
+  - name: Pulse API Health
+    url: https://pulse.opsprint.ai/api/health
+    expectedStatusCodes:
+      - 200
+    __dangerous__body_down_if_text_missing: '"status":"healthy"'
+  - name: Pulse API Readiness
+    url: https://pulse.opsprint.ai/api/health/ready
+    expectedStatusCodes:
+      - 200
+    __dangerous__body_down_if_text_missing: '"ready":true'
+  - name: Pulse Auth
+    url: https://pulse.opsprint.ai/login
+    expectedStatusCodes:
+      - 200
+    __dangerous__body_down_if_text_missing: 'brand-kicker'
+
+status-website:
+  cname: status.opsprint.ai
+  name: Pulse Status
+  introTitle: "Pulse Platform Status"
+  introMessage: "Real-time monitoring of Pulse platform services. Checks run every 5 minutes."
+  navbar:
+    - title: Status
+      href: /
+    - title: Pulse
+      href: https://pulse.opsprint.ai
+    - title: Contact
+      href: https://pulse.opsprint.ai/contact
+
+workflowSchedule:
+  uptime: "*/5 * * * *"
