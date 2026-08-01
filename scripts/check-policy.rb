@@ -109,17 +109,50 @@ end
 failures << "sample text remains: #{sample_mentions.inspect}" unless sample_mentions.empty?
 
 readme = File.read(File.join(ROOT, "README.md"))
-normalized_readme = readme.gsub(/\s+/, " ")
-required_domain_steps = [
-  "Confirm the default GitHub Pages URL",
-  "Verify `opsprint.ai` domain ownership",
-  "DNS-only CNAME",
-  "Wait for GitHub's DNS validation and TLS certificate",
-  "Enable HTTPS enforcement last"
+rollout_markers = %w[
+  workflow-token
+  static-site-ci
+  generated-branch
+  pages-source
+  default-site
+  org-ownership
+  dns-cname
+  custom-domain
+  tls-certificate
+  https-enforcement
+  live-custom-domain
+  gate-complete
 ]
-step_positions = required_domain_steps.map { |step| normalized_readme.index(step) }
-failures << "custom-domain instructions are missing or out of order" unless step_positions.all? && step_positions == step_positions.sort
-failures << "README does not declare the gh-pages source model" unless readme.include?("`gh-pages` branch at `/`")
+marker_tokens = rollout_markers.map { |marker| "<!-- status-rollout:#{marker} -->" }
+marker_positions = marker_tokens.map { |marker| readme.index(marker) }
+unless marker_positions.all? && marker_positions == marker_positions.sort && marker_positions.uniq.length == marker_positions.length
+  failures << "status rollout markers are missing, duplicated, or out of order"
+end
+
+gate_requirements = {
+  "workflow-token" => [/contents:\s*write/i, /GITHUB_TOKEN/, /No\s+broad\s+PAT/i],
+  "static-site-ci" => [/Static Site CI/, /gh workflow run/, /gh run watch/],
+  "generated-branch" => [/genuine\s+`gh-pages`\s+branch/i, /403/, /missing branch is a no-go/i],
+  "pages-source" => [/Deploy from a branch/i, /select\s+`gh-pages`\s+and\s+the\s+`\/`\s+root/i],
+  "default-site" => [%r{https://blockvantage\.github\.io/pulse-status/}, /HTTP 200/, /Do not continue on a redirect or error/i],
+  "org-ownership" => [/verify ownership of\s+`opsprint\.ai`/i, /before claiming any custom hostname/i],
+  "dns-cname" => [/DNS-only CNAME/i, /blockvantage\.github\.io/, /Do not proxy.*Cloudflare/i],
+  "custom-domain" => [/Add\s+`status\.opsprint\.ai`.*Pages custom domain/i],
+  "tls-certificate" => [/Wait for GitHub's DNS validation and TLS certificate/i, /before\s+changing transport settings/i],
+  "https-enforcement" => [/Enable HTTPS enforcement last/i, /certificate is\s+available/i],
+  "live-custom-domain" => [/all four checks.*healthy/i, %r{https://status\.opsprint\.ai}, /HTTP 200/, /Cloudflare 525/],
+  "gate-complete" => [/Do not mark.*gate complete/i, /repository sync/, /workflow publication/, /Pages/, /DNS/, /TLS/, /live HTTP checks/]
+}
+
+if marker_positions.all?
+  rollout_markers.each_with_index do |marker, index|
+    section_start = marker_positions[index]
+    section_end = marker_positions[index + 1] || readme.length
+    section = readme[section_start...section_end].gsub(/\s+/, " ")
+    missing = gate_requirements.fetch(marker).reject { |requirement| section.match?(requirement) }
+    failures << "#{marker} rollout gate is missing required semantics" unless missing.empty?
+  end
+end
 
 if failures.any?
   warn failures.map { |failure| "FAIL: #{failure}" }.join("\n")
