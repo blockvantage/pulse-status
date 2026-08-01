@@ -22,16 +22,20 @@ homepage does not accept a redirect as healthy.
 
 ## External Release Gates
 
+The status site uses the `gh-pages` branch at `/` as its GitHub Pages source.
 The release owner must complete and record these operations outside this repo:
 
-1. Create the public `blockvantage/pulse-status` repository from the Upptime
-   template and copy this directory's `.upptimerc.yml` and `README.md` into it.
-2. Enable GitHub Pages with GitHub Actions as its source.
-3. Add a DNS-only CNAME for `status.opsprint.ai` targeting
-   `blockvantage.github.io`.
-4. Configure `status.opsprint.ai` as the Pages custom domain, wait for GitHub's
-   TLS certificate, and enable HTTPS.
-5. Verify all four checks are present and healthy, then confirm
+1. Confirm the default GitHub Pages URL serves the generated Upptime site over
+   HTTPS before adding a custom domain.
+2. Verify `opsprint.ai` domain ownership for the `blockvantage` organization in
+   GitHub before claiming the hostname for this repository.
+3. Create a DNS-only CNAME for `status.opsprint.ai` targeting
+   `blockvantage.github.io`. Do not proxy the record through Cloudflare.
+4. Add `status.opsprint.ai` as the Pages custom domain. Wait for GitHub's DNS
+   validation and TLS certificate before changing transport settings.
+5. Enable HTTPS enforcement last, after GitHub reports that the certificate is
+   available.
+6. Verify all four checks are present and healthy, then confirm
    `https://status.opsprint.ai` returns HTTP 200 rather than a Cloudflare 525.
 
 Do not mark the public-status gate complete until the repository, DNS, TLS, and
