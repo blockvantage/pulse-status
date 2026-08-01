@@ -160,6 +160,32 @@ end
   failures << "#{file}: locked npm install missing" unless text.match?(/working-directory:\s*site[\s\S]*run:\s*npm ci/)
   failures << "#{file}: mutable uptime-monitor site command remains" if text.match?(/command:\s*["']site["']/)
   failures << "#{file}: wrong publish directory" unless text.include?('publish_dir: "site/__sapper__/export/"')
+
+  generate_start = text.index("- name: Generate site")
+  preserve_start = text.index("- name: Preserve valid monitor freshness")
+  deploy_start = text.index("- uses: peaceiris/actions-gh-pages@")
+  unless generate_start && preserve_start && deploy_start && generate_start < preserve_start && preserve_start < deploy_start
+    failures << "#{file}: freshness preservation must run after export and before deploy"
+  end
+  preservation = preserve_start && deploy_start ? text[preserve_start...deploy_start] : ""
+  failures << "#{file}: freshness preservation is not a public raw fetch" unless preservation.include?("https://raw.githubusercontent.com/")
+  unless preservation.include?("../scripts/preserve-monitor-freshness.sh")
+    failures << "#{file}: freshness preservation does not use the shared validator"
+  end
+  if preservation.match?(/GH_PAT|GITHUB_TOKEN|github\.token|authorization:/i)
+    failures << "#{file}: freshness preservation exposes a write credential"
+  end
+end
+
+preservation_path = File.join(ROOT, "scripts", "preserve-monitor-freshness.sh")
+unless File.exist?(preservation_path)
+  failures << "shared freshness preservation script is missing"
+else
+  preservation_script = File.read(preservation_path)
+  failures << "freshness preservation does not parse strict JSON" unless preservation_script.include?("JSON.parse")
+  failures << "freshness preservation does not require canonical UTC seconds" unless preservation_script.include?("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$")
+  failures << "freshness preservation does not calendar-round-trip timestamps" unless preservation_script.include?("toISOString")
+  failures << "freshness preservation does not reject future timestamps" unless preservation_script.include?("Date.now")
 end
 
 setup_text = File.read(File.join(WORKFLOW_DIR, "setup.yml"))

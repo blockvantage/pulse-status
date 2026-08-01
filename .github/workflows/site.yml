@@ -53,6 +53,14 @@ jobs:
           mkdir -p assets
           cp -R ../assets/. assets/
           npm run export
+      - name: Preserve valid monitor freshness
+        working-directory: site
+        env:
+          FRESHNESS_SOURCE_URL: https://raw.githubusercontent.com/${{ github.repository }}/gh-pages/monitor-freshness.json
+        run: >-
+          bash ../scripts/preserve-monitor-freshness.sh
+          "$FRESHNESS_SOURCE_URL"
+          "__sapper__/export/monitor-freshness.json"
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         name: GitHub Pages Deploy
         with:

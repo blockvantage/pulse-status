@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 const root = new URL("../", import.meta.url);
@@ -33,6 +34,51 @@ function workflowRunBody(workflow, stepName) {
     .join("\n");
 }
 
+function createFreshnessPreservationFixture(context) {
+  const sandbox = mkdtempSync(join(tmpdir(), "pulse-status-preserve-freshness-"));
+  context.after(() => rmSync(sandbox, { recursive: true, force: true }));
+  const site = join(sandbox, "site");
+  const output = join(site, "__sapper__", "export", "monitor-freshness.json");
+  const fixture = join(sandbox, "remote-monitor-freshness.json");
+  const bin = join(sandbox, "bin");
+  mkdirSync(join(site, "__sapper__", "export"), { recursive: true });
+  mkdirSync(bin);
+  const curl = join(bin, "curl");
+  writeFileSync(curl, `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "\${FAKE_CURL_STATUS:-0}" != "0" ]; then exit "$FAKE_CURL_STATUS"; fi
+cp "$FRESHNESS_FIXTURE" "$output"
+`);
+  chmodSync(curl, 0o755);
+
+  return {
+    output,
+    async run(remotePayload) {
+      writeFileSync(output, '{"checkedAt":null}\n');
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        FRESHNESS_FIXTURE: fixture,
+      };
+      if (remotePayload === undefined) env.FAKE_CURL_STATUS = "22";
+      else writeFileSync(fixture, remotePayload);
+      run("bash", [
+        fileURLToPath(new URL("scripts/preserve-monitor-freshness.sh", root)),
+        "https://raw.githubusercontent.com/blockvantage/pulse-status/gh-pages/monitor-freshness.json",
+        output,
+      ], { cwd: site, env });
+      return readFileSync(output, "utf8");
+    },
+  };
+}
+
 test("site writer keeps both repository checkouts credential-free", () => {
   for (const workflow of [siteWorkflow]) {
     const checkoutStarts = [...workflow.matchAll(/^\s*uses:\s*actions\/checkout@[^\n]+$/gm)]
@@ -54,6 +100,52 @@ test("site writer keeps both repository checkouts credential-free", () => {
     assert.match(workflow, /if:\s*github\.ref == 'refs\/heads\/main'/);
   }
   assert.doesNotMatch(config, /^customStatusWebsitePackage:/m);
+});
+
+test("site builds preserve freshness after export and before credentialed deploy", () => {
+  for (const workflow of [siteWorkflow, setupWorkflow]) {
+    const generate = workflow.indexOf("- name: Generate site");
+    const preserve = workflow.indexOf("- name: Preserve valid monitor freshness");
+    const deploy = workflow.indexOf("- uses: peaceiris/actions-gh-pages@");
+    assert.ok(generate >= 0 && generate < preserve && preserve < deploy);
+
+    const preservationStep = workflow.slice(preserve, deploy);
+    assert.match(preservationStep, /https:\/\/raw\.githubusercontent\.com/);
+    assert.match(preservationStep, /\.\.\/scripts\/preserve-monitor-freshness\.sh/);
+    assert.doesNotMatch(
+      preservationStep,
+      /GH_PAT|GITHUB_TOKEN|github\.token|authorization:/i,
+    );
+  }
+});
+
+test("shared site builder preserves a canonical public gh-pages freshness artifact", async (context) => {
+  const fixture = createFreshnessPreservationFixture(context);
+  const output = await fixture.run('{"checkedAt":"2026-08-01T15:31:41Z"}\n');
+  assert.deepEqual(JSON.parse(output), { checkedAt: "2026-08-01T15:31:41Z" });
+});
+
+test("shared site builder retains the fail-closed seed for missing or invalid freshness", async (context) => {
+  const fixture = createFreshnessPreservationFixture(context);
+  const invalidArtifacts = [
+    undefined,
+    "not json\n",
+    "null\n",
+    '{}\n',
+    '{"checkedAt":null}\n',
+    '{"checkedAt":"not-a-date"}\n',
+    '{"checkedAt":"0"}\n',
+    '{"checkedAt":"2026-02-30T00:00:00Z"}\n',
+    '{"checkedAt":"2026-08-01"}\n',
+    '{"checkedAt":"Sat, 01 Aug 2026 15:31:41 GMT"}\n',
+    '{"checkedAt":"2026-08-01T15:31:41.000Z"}\n',
+    '{"checkedAt":"2026-08-01T12:31:41-03:00"}\n',
+    '{"checkedAt":"2026-08-01T25:31:41Z"}\n',
+    '{"checkedAt":"2999-01-01T00:00:00Z"}\n',
+  ];
+  for (const artifact of invalidArtifacts) {
+    assert.deepEqual(JSON.parse(await fixture.run(artifact)), { checkedAt: null });
+  }
 });
 
 test("setup scrubs its trusted write credential before running the status generator", () => {
